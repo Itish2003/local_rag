@@ -155,7 +155,7 @@ func (r *ragServiceImpl) createRAGPrompt(query string, retrievedDocs []string) s
 // embedTextWithOllama generates embeddings using Ollama
 func (r *ragServiceImpl) embedTextWithOllama(c context.Context, textToEmbed string) ([]float32, error) {
 	reqBody, err := json.Marshal(models.OllamaEmbedRequest{
-		Model:  "nomic-embed-text",
+		Model:  "nomic-embed-text:v1.5",
 		Prompt: textToEmbed,
 	})
 	if err != nil {

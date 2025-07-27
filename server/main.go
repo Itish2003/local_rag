@@ -29,17 +29,35 @@ func main() {
 		log.Fatalf("FATAL: Failed to create chroma client: %v", err)
 	}
 
-	// Create collection
-	collection, err := chromaClient.CreateCollection(
-		context.Background(),
-		"test-collection",
-		nil,
-		true,
-		nil,
-		"",
-	)
+	// List collections and check if yours exists
+	collections, err := chromaClient.ListCollections(context.Background())
 	if err != nil {
-		log.Fatalf("FATAL: Failed to create collection: %v", err)
+		log.Fatalf("Failed to list collections: %v", err)
+	}
+
+	var collection *chromago.Collection
+	collectionExists := false
+	for _, col := range collections {
+		if col.Name == "test-collection" {
+			collectionExists = true
+			// Get the existing collection (if GetCollection method exists in V1)
+			break
+		}
+	}
+
+	if !collectionExists {
+		// Create collection
+		collection, err = chromaClient.CreateCollection(
+			context.Background(),
+			"test-collection",
+			nil,
+			true,
+			nil,
+			"",
+		)
+		if err != nil {
+			log.Fatalf("FATAL: Failed to create collection: %v", err)
+		}
 	}
 
 	geminiClient, err := genai.NewClient(context.Background(), &genai.ClientConfig{
