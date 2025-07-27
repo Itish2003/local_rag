@@ -7,14 +7,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github/itish2003/rag/models"
 	"io"
 	"log"
 	"net/http"
 	"strings"
 
-	chromago "github.com/amikos-tech/chroma-go"
-	"github.com/amikos-tech/chroma-go/types"
+	"github/itish2003/rag/models"
+
+	chromago "github.com/amikos-tech/chroma-go/pkg/api/v2" // <-- Import the types package
+	"github.com/amikos-tech/chroma-go/pkg/embeddings"
 	"github.com/google/uuid"
 	"google.golang.org/genai"
 )
@@ -28,7 +29,7 @@ type RAGService interface {
 // ragServiceImpl holds the dependencies it needs to do its job
 type ragServiceImpl struct {
 	httpClient   *http.Client
-	collection   *chromago.Collection
+	collection   chromago.Collection // Changed from pointer to interface
 	geminiClient *genai.Client
 }
 
@@ -36,23 +37,31 @@ type ragServiceImpl struct {
 func (r *ragServiceImpl) IngestNote(c context.Context, req models.IngestDataRequest) error {
 	log.Printf("SERVICE: Ingesting note: '%s'", req.Text)
 
-	embedding, err := r.embedTextWithOllama(c, req.Text)
+	embeddingVector, err := r.embedTextWithOllama(c, req.Text)
 	if err != nil {
 		return fmt.Errorf("could not generate embedding for note: %w", err)
 	}
 
-	_, err = r.collection.Add(
-		c,
-		[]*types.Embedding{types.NewEmbeddingFromFloat32(embedding)},
-		[]map[string]interface{}{{"source": "user_input"}},
-		[]string{req.Text},
-		[]string{uuid.New().String()},
+	// Create the proper embedding type
+	embedding := embeddings.NewEmbeddingFromFloat32(embeddingVector)
+
+	// Create metadata
+	metadata := chromago.NewDocumentMetadata(
+		chromago.NewStringAttribute("source", "user_input"),
+	)
+
+	// Use the proper embedding type
+	err = r.collection.Add(c,
+		chromago.WithIDs(chromago.DocumentID(uuid.New().String())),
+		chromago.WithTexts(req.Text),
+		chromago.WithEmbeddings(embedding),
+		chromago.WithMetadatas(metadata),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to add record to chromadb: %w", err)
 	}
 
-	log.Printf("SERVICE: Successfully got embedding of size %d", len(embedding))
+	log.Printf("SERVICE: Successfully added document")
 	return nil
 }
 
@@ -80,28 +89,28 @@ func (r *ragServiceImpl) QueryRAG(c context.Context, req models.QueryTextRequest
 	return response, nil
 }
 
-// retrieveDocuments queries ChromaDB for similar documents
+// retrieveDocuments queries ChromaDB for similar documents using v2 API
 func (r *ragServiceImpl) retrieveDocuments(c context.Context, query string, nResults int) ([]string, error) {
-	log.Printf("SERVICE-HELPER: Retrieving documents from ChromaDB...")
+	log.Printf("SERVICE-HELPER: Retrieving documents from ChromaDB using v2 API...")
 
+	// Use v2 API Query method
 	results, err := r.collection.Query(
 		c,
-		[]string{query},
-		int32(nResults),
-		nil,
-		nil,
-		nil,
+		chromago.WithQueryTexts(query),
+		chromago.WithNResults(nResults),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query chromadb: %w", err)
 	}
 
-	// Extract documents from results
+	// Extract documents from results using v2 API methods
 	var documents []string
-	if len(results.Documents) > 0 {
-		for _, doc := range results.Documents[0] {
-			if doc != "" {
-				documents = append(documents, doc)
+	documentGroups := results.GetDocumentsGroups()
+
+	if len(documentGroups) > 0 {
+		for _, doc := range documentGroups[0] {
+			if doc.ContentString() != "" {
+				documents = append(documents, doc.ContentString())
 			}
 		}
 	}
@@ -122,7 +131,8 @@ func (r *ragServiceImpl) generateResponseWithGemini(c context.Context, prompt st
 		{Parts: parts},
 	}
 
-	resp, err := r.geminiClient.Models.GenerateContent(c, "gemini-1.5-flash", content, nil)
+	// Updated to use gemini-2.5-flash as mentioned in the search results
+	resp, err := r.geminiClient.Models.GenerateContent(c, "gemini-2.5-flash", content, nil)
 	if err != nil {
 		return "", fmt.Errorf("gemini api call failed: %w", err)
 	}
@@ -145,10 +155,10 @@ func (r *ragServiceImpl) generateResponseWithGemini(c context.Context, prompt st
 // createRAGPrompt creates a prompt with context for the LLM
 func (r *ragServiceImpl) createRAGPrompt(query string, retrievedDocs []string) string {
 	if len(retrievedDocs) == 0 {
-		return query
+		return fmt.Sprintf("I don't have any relevant information to answer the question: %s", query)
 	}
 	context := "Context:\n" + strings.Join(retrievedDocs, "\n\n")
-	prompt := fmt.Sprintf("Using only the provided context, answer the following question.\n\n%s\n\nQuestion: %s\n\nAnswer:", context, query)
+	prompt := fmt.Sprintf("Using only the provided context, answer the following question. If the context doesn't contain relevant information, say so.\n\n%s\n\nQuestion: %s\n\nAnswer:", context, query)
 	return prompt
 }
 
@@ -187,10 +197,10 @@ func (r *ragServiceImpl) embedTextWithOllama(c context.Context, textToEmbed stri
 }
 
 // NewRAGService creates a new RAG service instance
-func NewRAGService(client *http.Client, collection *chromago.Collection, geminiClient *genai.Client) RAGService {
+func NewRAGService(client *http.Client, collection chromago.Collection, geminiClient *genai.Client) RAGService {
 	return &ragServiceImpl{
 		httpClient:   client,
-		collection:   collection,
+		collection:   collection, // No longer a pointer
 		geminiClient: geminiClient,
 	}
 }
