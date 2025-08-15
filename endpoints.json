@@ -1,0 +1,26 @@
+[
+  {
+    "endpoint": "/api/v1/notes",
+    "method": "POST",
+    "payload": {
+      "text": "This is a test note to be ingested into ChromaDB."
+    }
+  },
+  {
+    "endpoint": "/api/v1/query",
+    "method": "POST",
+    "payload": {
+      "query": "What is the content of the test note?"
+    }
+  },
+  {
+    "endpoint": "/api/v1/notes",
+    "method": "GET",
+    "payload": null
+  },
+  {
+    "endpoint": "/health",
+    "method": "GET",
+    "payload": null
+  }
+]

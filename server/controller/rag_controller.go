@@ -71,3 +71,18 @@ func (c *RAGController) QueryRAG(ctx *gin.Context) {
 	// On success, return a 200 OK status with the response data from the service.
 	ctx.JSON(http.StatusOK, response)
 }
+
+// GetAllNotes is the Gin handler for the GET /api/v1/notes endpoint.
+func (c *RAGController) GetAllNotes(ctx *gin.Context) {
+	// Delegate the logic to the service layer.
+	response, err := c.ragService.GetAllNotes(ctx.Request.Context())
+	if err != nil {
+		// If the service returns an error, respond with a generic server error.
+		// The actual error should be logged by the service layer.
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve notes"})
+		return
+	}
+
+	// On success, return a 200 OK status with the response data from the service.
+	ctx.JSON(http.StatusOK, response)
+}

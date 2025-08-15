@@ -24,6 +24,7 @@ import (
 type RAGService interface {
 	IngestNote(c context.Context, req models.IngestDataRequest) error
 	QueryRAG(c context.Context, req models.QueryTextRequest) (*models.QueryRAGResponse, error)
+	GetAllNotes(c context.Context) (*models.GetAllNotesResponse, error)
 }
 
 // ragServiceImpl holds the dependencies it needs to do its job
@@ -31,6 +32,64 @@ type ragServiceImpl struct {
 	httpClient   *http.Client
 	collection   chromago.Collection // Changed from pointer to interface
 	geminiClient *genai.Client
+}
+
+// GetAllNotes implements RAGService to retrieve all documents from ChromaDB.
+func (r *ragServiceImpl) GetAllNotes(c context.Context) (*models.GetAllNotesResponse, error) {
+	log.Printf("SERVICE: Getting all notes from ChromaDB...")
+
+	// Use the v2 API's Get method to retrieve all documents.
+	results, err := r.collection.Get(c)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get documents from chromadb: %w", err)
+	}
+
+	// Extract the data using the correct accessor methods.
+	ids := results.GetIDs()
+	documents := results.GetDocuments()
+	metadatas := results.GetMetadatas()
+
+	// Check if the collection is empty.
+	if len(ids) == 0 {
+		log.Printf("SERVICE: No notes found in the collection.")
+		return &models.GetAllNotesResponse{
+			Count: 0,
+			Notes: []models.Note{},
+		}, nil
+	}
+
+	// Transform the results into the response model.
+	notes := make([]models.Note, 0, len(documents))
+	for i := range documents {
+		var metadataMap map[string]interface{}
+		if len(metadatas) > i && metadatas[i] != nil {
+			// Marshal the DocumentMetadata to JSON
+			jsonBytes, err := json.Marshal(metadatas[i])
+			if err != nil {
+				log.Printf("WARN: could not marshal metadata for document %s: %v", ids[i], err)
+				// Assign an empty map or handle the error as appropriate
+				metadataMap = make(map[string]interface{})
+			} else {
+				// Unmarshal the JSON back into a map[string]interface{}
+				if err := json.Unmarshal(jsonBytes, &metadataMap); err != nil {
+					log.Printf("WARN: could not unmarshal metadata for document %s: %v", ids[i], err)
+					metadataMap = make(map[string]interface{})
+				}
+			}
+		}
+
+		notes = append(notes, models.Note{
+			ID:       string(ids[i]),
+			Text:     documents[i].ContentString(),
+			Metadata: metadataMap,
+		})
+	}
+
+	log.Printf("SERVICE: Successfully retrieved %d notes", len(notes))
+	return &models.GetAllNotesResponse{
+		Count: len(notes),
+		Notes: notes,
+	}, nil
 }
 
 // IngestNote implements RAGService
@@ -93,10 +152,19 @@ func (r *ragServiceImpl) QueryRAG(c context.Context, req models.QueryTextRequest
 func (r *ragServiceImpl) retrieveDocuments(c context.Context, query string, nResults int) ([]string, error) {
 	log.Printf("SERVICE-HELPER: Retrieving documents from ChromaDB using v2 API...")
 
-	// Use v2 API Query method
+	// 1. Embed the query text using Ollama
+	queryEmbedding, err := r.embedTextWithOllama(c, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to embed query text: %w", err)
+	}
+
+	// Create the proper embedding type for the query
+	embedding := embeddings.NewEmbeddingFromFloat32(queryEmbedding)
+
+	// 2. Use the query embedding to find similar documents in ChromaDB
 	results, err := r.collection.Query(
 		c,
-		chromago.WithQueryTexts(query),
+		chromago.WithQueryEmbeddings(embedding),
 		chromago.WithNResults(nResults),
 	)
 	if err != nil {
