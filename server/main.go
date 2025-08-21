@@ -58,8 +58,14 @@ func main() {
 	}
 	log.Println("Successfully connected to Google Gemini.")
 
+	fileActions, err := services.NewFileActions()
+	if err != nil {
+		log.Fatalf("FATAL: Failed to create FileActions service: %v. Is INDEX_PATH set?", err)
+	}
+	log.Printf("FileActions service initialized with notes directory: %s", fileActions.NotesDir)
+
 	// Use the proper constructor function
-	ragService := services.NewRAGService(httpClient, collection, geminiClient)
+	ragService := services.NewRAGService(httpClient, collection, geminiClient, fileActions)
 	ragController := controller.NewRAGController(ragService)
 
 	indexingService := services.NewFileIndexingService(collection, ragService)

@@ -33,6 +33,7 @@ type ragServiceImpl struct {
 	httpClient   *http.Client
 	collection   chromago.Collection // Changed from pointer to interface
 	geminiClient *genai.Client
+	FileActions  *FileActions
 }
 
 // GetAllNotes implements RAGService to retrieve all documents from ChromaDB.
@@ -213,35 +214,84 @@ func (r *ragServiceImpl) retrieveDocuments(c context.Context, query string, nRes
 
 // generateResponseWithGemini generates a response using Gemini API
 func (r *ragServiceImpl) generateResponseWithGemini(c context.Context, prompt string) (string, error) {
-	log.Printf("SERVICE-HELPER: Sending prompt to Gemini...")
+	log.Printf("SERVICE-HELPER: Sending prompt to Gemini with tool support...")
 
-	// Use the correct method from the API
-	parts := []*genai.Part{
-		{Text: prompt},
-	}
-	content := []*genai.Content{
-		{Parts: parts},
-	}
+	// The history of the conversation.
+	var history []*genai.Content
 
-	// Updated to use gemini-2.5-flash as mentioned in the search results
-	resp, err := r.geminiClient.Models.GenerateContent(c, "gemini-2.5-flash", content, nil)
-	if err != nil {
-		return "", fmt.Errorf("gemini api call failed: %w", err)
-	}
+	// Create the first part and add it to the history.
+	history = append(history, &genai.Content{
+		Parts: []*genai.Part{
+			{Text: prompt},
+		},
+		Role: "user",
+	})
 
-	// Extract the text from the response
-	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
-		return "I'm sorry, I couldn't generate a response based on the provided notes.", nil
-	}
-
-	// Concatenate all text parts
-	var responseText strings.Builder
-	for _, part := range resp.Candidates[0].Content.Parts {
-		if part.Text != "" {
-			responseText.WriteString(part.Text)
+	// Loop to handle potential function calls.
+	for {
+		// Call the GenerateContent method with the history and tool config.
+		result, err := r.geminiClient.Models.GenerateContent(
+			c,
+			"gemini-2.5-flash",
+			history,
+			&genai.GenerateContentConfig{
+				Tools: GetFileActionTools(),
+			},
+		)
+		if err != nil {
+			return "", fmt.Errorf("gemini api call failed: %w", err)
 		}
+
+		if len(result.Candidates) == 0 || len(result.Candidates[0].Content.Parts) == 0 {
+			return "I'm sorry, I couldn't generate a response based on the provided notes.", nil
+		}
+
+		// Append the model's response to the history.
+		history = append(history, result.Candidates[0].Content)
+
+		part := result.Candidates[0].Content.Parts[0]
+		// Check if the part contains a FunctionCall
+		if part.FunctionCall != nil {
+			call := part.FunctionCall
+			log.Printf("Gemini wants to call function: %s with args: %v", call.Name, call.Args)
+
+			var resultStr string
+			switch call.Name {
+			case "createMarkdownFile":
+				resultStr = r.FileActions.CreateMarkdownFile(call.Args["filename"].(string), call.Args["content"].(string))
+			case "deleteMarkdownFile":
+				resultStr = r.FileActions.DeleteMarkdownFile(call.Args["filename"].(string))
+			case "editMarkdownFile":
+				resultStr = r.FileActions.EditMarkdownFile(call.Args["filename"].(string), call.Args["content"].(string))
+			default:
+				resultStr = fmt.Sprintf("Error: Unknown function '%s' requested.", call.Name)
+			}
+
+			// Create the function response part and add it to the history.
+			part2 := &genai.FunctionResponse{
+				Name:     call.Name,
+				Response: map[string]interface{}{"result": resultStr},
+			}
+			history = append(history, &genai.Content{
+				Parts: []*genai.Part{
+					{FunctionResponse: part2},
+				},
+				Role: "user", // Role is 'user' for function responses.
+			})
+
+			// Continue the loop to get the next response from the model.
+			continue
+		}
+
+		// If it's not a function call, we have our final answer.
+		var responseText strings.Builder
+		for _, p := range result.Candidates[0].Content.Parts {
+			if p.Text != "" {
+				responseText.WriteString(p.Text)
+			}
+		}
+		return responseText.String(), nil
 	}
-	return responseText.String(), nil
 }
 
 // createRAGPrompt creates a prompt with context for the LLM
@@ -293,10 +343,11 @@ func (r *ragServiceImpl) EmbedTextWithOllama(c context.Context, textToEmbed stri
 }
 
 // NewRAGService creates a new RAG service instance
-func NewRAGService(client *http.Client, collection chromago.Collection, geminiClient *genai.Client) RAGService {
+func NewRAGService(client *http.Client, collection chromago.Collection, geminiClient *genai.Client, fileActions *FileActions) RAGService {
 	return &ragServiceImpl{
 		httpClient:   client,
 		collection:   collection, // No longer a pointer
 		geminiClient: geminiClient,
+		FileActions:  fileActions, // Initialize FileActions
 	}
 }
