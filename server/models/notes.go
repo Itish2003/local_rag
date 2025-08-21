@@ -12,3 +12,9 @@ type GetAllNotesResponse struct {
 	Count int    `json:"count"`
 	Notes []Note `json:"notes"`
 }
+
+// SourceDocument represents a chunk of text and its origin.
+type SourceDocument struct {
+	Text     string                 `json:"text"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}

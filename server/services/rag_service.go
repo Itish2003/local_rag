@@ -150,7 +150,7 @@ func (r *ragServiceImpl) QueryRAG(c context.Context, req models.QueryTextRequest
 }
 
 // retrieveDocuments queries ChromaDB for similar documents using v2 API
-func (r *ragServiceImpl) retrieveDocuments(c context.Context, query string, nResults int) ([]string, error) {
+func (r *ragServiceImpl) retrieveDocuments(c context.Context, query string, nResults int) ([]models.SourceDocument, error) {
 	log.Printf("SERVICE-HELPER: Retrieving documents from ChromaDB using v2 API...")
 
 	// 1. Embed the query text using Ollama
@@ -172,17 +172,40 @@ func (r *ragServiceImpl) retrieveDocuments(c context.Context, query string, nRes
 		return nil, fmt.Errorf("failed to query chromadb: %w", err)
 	}
 
-	// Extract documents from results using v2 API methods
-	var documents []string
+	var documents []models.SourceDocument
 	documentGroups := results.GetDocumentsGroups()
+	metadataGroups := results.GetMetadatasGroups()
 
 	if len(documentGroups) > 0 {
-		for _, doc := range documentGroups[0] {
+		for i, doc := range documentGroups[0] {
 			if doc.ContentString() != "" {
-				documents = append(documents, doc.ContentString())
+				metadata := metadataGroups[0][i]
+				var metadataMap map[string]interface{}
+
+				// THIS IS THE KEY: The DocumentMetadata struct does not have a public GetValues() method.
+				// The correct way to convert it to a map is to marshal it to JSON and then unmarshal it.
+				if metadata != nil {
+					jsonBytes, err := json.Marshal(metadata)
+					if err != nil {
+						log.Printf("WARN: could not marshal metadata for document: %v", err)
+						metadataMap = make(map[string]interface{}) // Use empty map on error
+					} else {
+						if err := json.Unmarshal(jsonBytes, &metadataMap); err != nil {
+							log.Printf("WARN: could not unmarshal metadata for document: %v", err)
+							metadataMap = make(map[string]interface{}) // Use empty map on error
+						}
+					}
+				}
+
+				sourceDoc := models.SourceDocument{
+					Text:     doc.ContentString(),
+					Metadata: metadataMap,
+				}
+				documents = append(documents, sourceDoc)
 			}
 		}
 	}
+	// =====================================================================================
 
 	log.Printf("SERVICE-HELPER: Retrieved %d documents", len(documents))
 	return documents, nil
@@ -222,12 +245,16 @@ func (r *ragServiceImpl) generateResponseWithGemini(c context.Context, prompt st
 }
 
 // createRAGPrompt creates a prompt with context for the LLM
-func (r *ragServiceImpl) createRAGPrompt(query string, retrievedDocs []string) string {
+func (r *ragServiceImpl) createRAGPrompt(query string, retrievedDocs []models.SourceDocument) string {
 	if len(retrievedDocs) == 0 {
 		return fmt.Sprintf("I don't have any relevant information to answer the question: %s", query)
 	}
-	context := "Context:\n" + strings.Join(retrievedDocs, "\n\n")
-	prompt := fmt.Sprintf("Using only the provided context, answer the following question. If the context doesn't contain relevant information, say so.\n\n%s\n\nQuestion: %s\n\nAnswer:", context, query)
+	var context strings.Builder
+	context.WriteString("Context:\n")
+	for _, doc := range retrievedDocs {
+		context.WriteString(fmt.Sprintf("%s\n\n", doc.Text))
+	}
+	prompt := fmt.Sprintf("Using only the provided context, answer the following question. If the context doesn't contain relevant information, say so.\n\n%s\n\nQuestion: %s\n\nAnswer:", context.String(), query)
 	return prompt
 }
 

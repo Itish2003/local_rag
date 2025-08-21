@@ -6,7 +6,7 @@ type InjestDataResponse struct {
 }
 
 type QueryRAGResponse struct {
-	Answer     string   `json:"answer"`
-	SourceDocs []string `json:"source_docs,omitempty"`
-	Error      string   `json:"error,omitempty"`
+	Answer     string           `json:"answer"`
+	SourceDocs []SourceDocument `json:"source_docs,omitempty"`
+	Error      string           `json:"error,omitempty"`
 }
