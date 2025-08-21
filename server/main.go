@@ -5,10 +5,13 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github/itish2003/rag/controller"
 	"github/itish2003/rag/services"
+
+	"github.com/joho/godotenv"
 
 	chromago "github.com/amikos-tech/chroma-go/pkg/api/v2"
 	"github.com/gin-gonic/gin"
@@ -16,6 +19,11 @@ import (
 )
 
 func main() {
+	// Load .env file from the current directory
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, relying on environment variables.")
+	}
+
 	// Create HTTP client properly
 	httpClient := &http.Client{
 		Timeout: 30 * time.Second,
@@ -53,6 +61,21 @@ func main() {
 	// Use the proper constructor function
 	ragService := services.NewRAGService(httpClient, collection, geminiClient)
 	ragController := controller.NewRAGController(ragService)
+
+	indexingService := services.NewFileIndexingService(collection, ragService)
+	go func() {
+		indexPath := os.Getenv("INDEX_PATH")
+		if indexPath == "" {
+			log.Println("WARN: INDEX_PATH not set in .env. File indexing will not run.")
+			return
+		}
+		absPath, err := filepath.Abs(indexPath)
+		if err != nil {
+			log.Printf("ERROR: Invalid INDEX_PATH: %v", err)
+			return
+		}
+		indexingService.ScanAndIndexDirectory(context.Background(), absPath)
+	}()
 
 	// Setup Gin router
 	router := gin.Default()
