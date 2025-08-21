@@ -109,9 +109,7 @@ func (s *FileIndexingService) processAndEmbedFile(ctx context.Context, path, has
 	log.Printf("INDEXER: Split %s into %d chunks.", path, len(chunks))
 
 	for i, chunk := range chunks {
-		embeddingVector, err := s.ragService.(interface {
-			embedTextWithOllama(context.Context, string) ([]float32, error)
-		}).embedTextWithOllama(ctx, chunk)
+		embeddingVector, err := s.ragService.EmbedTextWithOllama(ctx, chunk)
 		if err != nil {
 			return fmt.Errorf("could not embed chunk %d of %s: %w", i, path, err)
 		}

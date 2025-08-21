@@ -25,7 +25,7 @@ type RAGService interface {
 	IngestNote(c context.Context, req models.IngestDataRequest) error
 	QueryRAG(c context.Context, req models.QueryTextRequest) (*models.QueryRAGResponse, error)
 	GetAllNotes(c context.Context) (*models.GetAllNotesResponse, error)
-	EmbedTextWithOllama(c context.Context, textToEmbed string) ([]float32, error)
+	EmbedTextWithOllama(ctx context.Context, textToEmbed string) ([]float32, error)
 }
 
 // ragServiceImpl holds the dependencies it needs to do its job
