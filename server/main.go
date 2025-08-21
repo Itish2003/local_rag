@@ -63,19 +63,25 @@ func main() {
 	ragController := controller.NewRAGController(ragService)
 
 	indexingService := services.NewFileIndexingService(collection, ragService)
-	go func() {
-		indexPath := os.Getenv("INDEX_PATH")
-		if indexPath == "" {
-			log.Println("WARN: INDEX_PATH not set in .env. File indexing will not run.")
-			return
-		}
+
+	indexPath := os.Getenv("INDEX_PATH")
+	if indexPath == "" {
+		log.Println("WARN: INDEX_PATH not set in .env. File indexing will not run.")
+	} else {
 		absPath, err := filepath.Abs(indexPath)
 		if err != nil {
 			log.Printf("ERROR: Invalid INDEX_PATH: %v", err)
-			return
+		} else {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel() // Only cancel on server shutdown
+
+			// Run the initial scan
+			indexingService.ScanAndIndexDirectory(ctx, absPath)
+
+			// Start the real-time watcher (in a goroutine so it doesn't block)
+			go indexingService.WatchDirectory(ctx, absPath)
 		}
-		indexingService.ScanAndIndexDirectory(context.Background(), absPath)
-	}()
+	}
 
 	// Setup Gin router
 	router := gin.Default()

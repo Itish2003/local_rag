@@ -65,7 +65,7 @@ if __name__ == '__main__':
     output_markdown_file = 'project_output.md' 
     
     # Optional: specify files and directories to ignore
-    files_and_dirs_to_ignore = ['.git', '__pycache__', '.vscode', 'node_modules', 'my_chroma_data', 'go.mod','package.json','package-lock.json','vite.config.js','eslint.config.js', 'go.sum', output_markdown_file]
+    files_and_dirs_to_ignore = ['.git', '__pycache__', '.vscode', 'node_modules','.env', 'my_chroma_data', 'go.mod','package.json','package-lock.json','vite.config.js','eslint.config.js', 'go.sum', output_markdown_file]
 
     create_markdown_from_project(project_directory, output_markdown_file, files_and_dirs_to_ignore)
     print(f"Project content has been written to {output_markdown_file}")

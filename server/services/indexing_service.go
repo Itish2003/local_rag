@@ -14,6 +14,7 @@ import (
 
 	chromago "github.com/amikos-tech/chroma-go/pkg/api/v2"
 	"github.com/amikos-tech/chroma-go/pkg/embeddings"
+	"github.com/fsnotify/fsnotify"
 	"github.com/google/uuid"
 	"github.com/tmc/langchaingo/textsplitter"
 )
@@ -35,6 +36,75 @@ func NewFileIndexingService(collection chromago.Collection, ragService RAGServic
 // IndexState holds the current hash of a file in our index.
 type IndexState struct {
 	Hash string
+}
+
+// WatchDirectory starts a long-running process to watch for file changes in real-time.
+func (s *FileIndexingService) WatchDirectory(ctx context.Context, dirPath string) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Printf("WATCHER ERROR: Failed to create file watcher: %v", err)
+		return
+	}
+	defer watcher.Close()
+
+	// Goroutine to handle events from the watcher.
+	go func() {
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				// We only care about supported file types.
+				if !isSupportedFile(event.Name) {
+					continue
+				}
+
+				log.Printf("WATCHER EVENT: %s", event)
+
+				// A Create or Write event means we need to index the file.
+				// Many editors perform a "write" by creating a temp file and renaming,
+				// which can trigger multiple events. We handle Create and Write the same.
+				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
+					log.Printf("WATCHER: File modified/created: %s. Re-indexing...", event.Name)
+					hash, err := calculateFileHash(event.Name)
+					if err != nil {
+						log.Printf("WATCHER WARN: Could not hash file %s: %v", event.Name, err)
+						continue
+					}
+					// Delete old versions before re-indexing
+					s.deleteDocumentsByFilepath(ctx, event.Name)
+					if err := s.processAndEmbedFile(ctx, event.Name, hash); err != nil {
+						log.Printf("WATCHER ERROR: Failed to process file %s: %v", event.Name, err)
+					}
+				} else if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
+					// Rename is often treated as Remove by watchers.
+					log.Printf("WATCHER: File removed/renamed: %s. Removing from index...", event.Name)
+					if err := s.deleteDocumentsByFilepath(ctx, event.Name); err != nil {
+						log.Printf("WATCHER ERROR: Failed to delete records for %s: %v", event.Name, err)
+					}
+				}
+
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				log.Printf("WATCHER ERROR: %v", err)
+			case <-ctx.Done():
+				log.Println("WATCHER: Context cancelled, shutting down watcher.")
+				return
+			}
+		}
+	}()
+
+	log.Printf("WATCHER: Watching directory: %s", dirPath)
+	err = watcher.Add(dirPath)
+	if err != nil {
+		log.Printf("WATCHER ERROR: Failed to add path to watcher: %v", err)
+	}
+
+	// Block until the context is cancelled (e.g., server shutdown).
+	<-ctx.Done()
 }
 
 // ScanAndIndexDirectory is the main function to sync the directory with ChromaDB.
