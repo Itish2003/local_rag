@@ -30,7 +30,7 @@ The system needs to know which directory to index. We'll add this path to the `.
 **Edit `server/.env` and add the new `INDEX_PATH` variable at the bottom:**
 
 ```env
-GEMINI_API_KEY='AIzaSyDb7JayvdzIk6GtSJ1V-ktcQw0qoBww3K4'
+GEMINI_API_KEY=''
 OLLAMA_URL=http://localhost:11434/api/embeddings
 OLLAMA_MODEL=nomic-embed-text
 GEMINI_MODEL=gemini-1.5-flash

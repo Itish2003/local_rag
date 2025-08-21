@@ -206,7 +206,7 @@ my_chroma_data/chroma.sqlite3
 ## File: `server/.env`
 
 ```
-GEMINI_API_KEY='AIzaSyDb7JayvdzIk6GtSJ1V-ktcQw0qoBww3K4'
+GEMINI_API_KEY=''
 OLLAMA_URL=http://localhost:11434/api/embeddings
 OLLAMA_MODEL=nomic-embed-text
 GEMINI_MODEL=gemini-1.5-flash
