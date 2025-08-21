@@ -2,16 +2,23 @@ package services
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/joho/godotenv"
 	"github.com/unidoc/unipdf/v3/common/license"
 	"github.com/unidoc/unipdf/v3/extractor"
 	"github.com/unidoc/unipdf/v3/model"
 )
 
 func init() {
+
+	// Load .env file from the current directory
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, relying on environment variables.")
+	}
 	err := license.SetMeteredKey(os.Getenv("UNIDOC_LICENSE_KEY"))
 	if err != nil {
 		fmt.Printf("ERROR: Failed to set Unidoc license key: %v. PDF processing will fail.\n", err)

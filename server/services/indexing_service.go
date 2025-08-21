@@ -166,9 +166,14 @@ func (s *FileIndexingService) ScanAndIndexDirectory(ctx context.Context, dirPath
 }
 
 func (s *FileIndexingService) processAndEmbedFile(ctx context.Context, path, hash string) error {
-	content, err := os.ReadFile(path)
+	// content, err := os.ReadFile(path)
+	// if err != nil {
+	// 	return err
+	// }
+
+	content, err := ExtractTextFromFile(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("could not extract text from %s: %w", path, err)
 	}
 
 	splitter := textsplitter.NewRecursiveCharacter(textsplitter.WithChunkSize(1000), textsplitter.WithChunkOverlap(100))
@@ -242,7 +247,7 @@ func (s *FileIndexingService) deleteDocumentsByFilepath(ctx context.Context, pat
 func isSupportedFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
-	case ".txt", ".md": // Feel free to add more extensions like .go, .py, etc.
+	case ".txt", ".md", ".pdf": // Feel free to add more extensions like .go, .py, etc.
 		return true
 	default:
 		return false
