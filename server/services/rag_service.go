@@ -25,6 +25,7 @@ type RAGService interface {
 	IngestNote(c context.Context, req models.IngestDataRequest) error
 	QueryRAG(c context.Context, req models.QueryTextRequest) (*models.QueryRAGResponse, error)
 	GetAllNotes(c context.Context) (*models.GetAllNotesResponse, error)
+	EmbedTextWithOllama(c context.Context, textToEmbed string) ([]float32, error)
 }
 
 // ragServiceImpl holds the dependencies it needs to do its job
@@ -96,7 +97,7 @@ func (r *ragServiceImpl) GetAllNotes(c context.Context) (*models.GetAllNotesResp
 func (r *ragServiceImpl) IngestNote(c context.Context, req models.IngestDataRequest) error {
 	log.Printf("SERVICE: Ingesting note: '%s'", req.Text)
 
-	embeddingVector, err := r.embedTextWithOllama(c, req.Text)
+	embeddingVector, err := r.EmbedTextWithOllama(c, req.Text)
 	if err != nil {
 		return fmt.Errorf("could not generate embedding for note: %w", err)
 	}
@@ -153,7 +154,7 @@ func (r *ragServiceImpl) retrieveDocuments(c context.Context, query string, nRes
 	log.Printf("SERVICE-HELPER: Retrieving documents from ChromaDB using v2 API...")
 
 	// 1. Embed the query text using Ollama
-	queryEmbedding, err := r.embedTextWithOllama(c, query)
+	queryEmbedding, err := r.EmbedTextWithOllama(c, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to embed query text: %w", err)
 	}
@@ -230,8 +231,8 @@ func (r *ragServiceImpl) createRAGPrompt(query string, retrievedDocs []string) s
 	return prompt
 }
 
-// embedTextWithOllama generates embeddings using Ollama
-func (r *ragServiceImpl) embedTextWithOllama(c context.Context, textToEmbed string) ([]float32, error) {
+// EmbedTextWithOllama generates embeddings using Ollama.
+func (r *ragServiceImpl) EmbedTextWithOllama(c context.Context, textToEmbed string) ([]float32, error) {
 	reqBody, err := json.Marshal(models.OllamaEmbedRequest{
 		Model:  "nomic-embed-text:v1.5",
 		Prompt: textToEmbed,
