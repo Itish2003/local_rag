@@ -1,39 +1,90 @@
 # Local RAG API with Go, Gemini, and ChromaDB
 
-This project implements a Retrieval-Augmented Generation (RAG) API using Go, Google's Gemini, ChromaDB for vector storage, and a local Ollama instance for generating embeddings.
+A Retrieval-Augmented Generation (RAG) application implemented with a Go backend, Google Gemini for LLM responses (via API key), ChromaDB for vector storage, and a local Ollama instance for generating embeddings. The project includes a React frontend (optional) and supports real-time file indexing (`.md`, `.txt`, `.pdf`) plus Gemini function-calling to modify local files.
+
+---
+
+## Table of contents
+
+1. [Prerequisites](#prerequisites)
+2. [Configuration](#configuration)
+3. [Running the services](#running-the-services)
+4. [API endpoints & examples](#api-endpoints--examples)
+5. [Notes, tips & troubleshooting](#notes-tips--troubleshooting)
+
+---
 
 ## Prerequisites
 
-Before you begin, ensure you have the following installed:
-- [Go](https://go.dev/doc/install) (version 1.21 or later)
-- [Python](https://www.python.org/downloads/) & [pip](https://pip.pypa.io/en/stable/installation/)
-- [Ollama](https://ollama.ai/)
+Make sure these are installed before you start:
 
-## 1. Setup
+* **Go** (1.21+)
+* **Node.js & npm** (for the React client)
+* **Python & pip** (for ChromaDB)
+* **Ollama** (local model server)
+* A **Google API key** for Gemini (obtainable from Google AI Studio)
 
-### a. Get Your Gemini API Key
+## Configuration
 
-1. Go to the [Google AI Studio](https://aistudio.google.com/).
-2. Sign in with your Google account.
-3. Click on **"Get API key"** and create a new API key in a new or existing project.
-4. Copy the generated API key.
+### 1. Obtain your Gemini API key
 
-### b. Set Environment Variable
+1. Visit [Google AI Studio](https://aistudio.google.com/) and sign in with your Google account.
+2. Click **"Get API key"** and create an API key under a project.
+3. Copy the generated API key.
 
-You need to set the `GEMINI_API_KEY` environment variable for the Go application to authenticate with the Gemini API. You can do this by exporting it in your shell configuration file (e.g., `.zshrc`, `.bashrc`) or by setting it in the terminal session where you'll run the server.
+Set the environment variable in your shell (or add to `server/.env` as shown below):
 
 ```bash
 export GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
 ```
-Replace `"YOUR_GEMINI_API_KEY"` with the key you obtained.
 
-## 2. Running the Services
+### 2. Backend environment file (`server/.env`)
 
-The application requires three separate services to be running: ChromaDB, Ollama, and the Go backend server.
+Create a `.env` file inside the `server/` directory with the following variables:
 
-### a. Run ChromaDB Locally
+```env
+# Get from Google AI Studio
+GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
 
-First, you need to install the `chromadb` Python package.
+# Path to your notes directory (used by the file indexer)
+INDEX_PATH="../notes"
+
+# (Optional) UniDoc Cloud key if your pipeline uses UniDoc for PDFs
+UNIDOC_LICENSE_KEY="YOUR_UNIDOC_LICENSE_KEY"
+```
+
+> **Note:** If you prefer exporting the env var directly in your shell session (rather than `.env`), that's fine too.
+
+### 3. Frontend proxy (`client/vite.config.js`)
+
+If you run the optional React frontend, create a Vite config to proxy API calls to the Go backend:
+
+```javascript
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+    },
+  },
+})
+```
+
+---
+
+## Running the services
+
+The app uses **four** processes: ChromaDB, Ollama, the Go backend, and (optionally) the React frontend. Open separate terminals for each.
+
+### Terminal 1 — ChromaDB (vector store)
+
+Install the Python package and start the Chroma server (persistent path recommended):
 
 ```bash
 pip install chromadb
@@ -44,9 +95,10 @@ Once installed, open a new terminal window and run the following command to star
 ```bash
 chroma run --path ./my_chroma_data
 ```
-Keep this process running.
 
-### b. Run the Ollama Server
+Leave this running. The `--path` directory will be created if it doesn't exist.
+
+### Terminal 2 — Ollama (local embeddings)
 
 In another terminal window, start the Ollama server. This will host the local model needed for generating text embeddings.
 
@@ -59,52 +111,101 @@ Once the server is running, open a **third** terminal window and pull the `nomic
 ```bash
 ollama pull nomic-embed-text:v1.5
 ```
-Keep the `ollama serve` process running.
 
-### c. Run the Go Backend Server
+Keep `ollama serve` running.
+
+### Terminal 3 — Go backend
 
 Finally, navigate to the `server` directory of the project and start the Go application.
 
 ```bash
 cd server
+# ensure GEMINI_API_KEY is set (or present in server/.env)
 go run main.go
 ```
 
-You should see log messages indicating that the server has started successfully on port 8080 and has connected to the Gemini and ChromaDB services.
+You should see logs showing the server starting on port `8080` and successful connections to Gemini/Chroma/Ollama.
 
-## 3. Using the API
+### Terminal 4 — React frontend (optional)
 
-The API provides endpoints to ingest notes, ask questions, and retrieve all stored notes. You can use a tool like `curl` or Postman to interact with the API.
+If you want the web client:
 
-Refer to the `endpoints.json` file for a detailed list of endpoints and their corresponding JSON payloads.
+```bash
+cd client
+npm install
+npm run dev
+```
 
-### Example `curl` Commands
+By default Vite serves the client at `http://localhost:5173` and proxies `/api` to the Go backend.
 
-#### Ingest a Note
+---
+
+## API endpoints & examples
+
+The backend exposes endpoints for ingesting notes, running a RAG-style query, retrieving stored notes, and health checks. Refer to `endpoints.json` in the repo for the authoritative list and any additional payload examples.
+
+Below are the most commonly used `curl` examples:
+
+### Ingest a note
+
 ```bash
 curl -X POST http://localhost:8080/api/v1/notes \
--H "Content-Type: application/json" \
--d '{ 
-  "text": "The sky is blue during a clear day."
-}'
+  -H "Content-Type: application/json" \
+  -d '{ "text": "The sky is blue during a clear day." }'
 ```
 
+**Payload**
 
-#### Query the RAG Pipeline
+* `text` — the string content to index (plain text). The server will generate embeddings, store vectors in ChromaDB, and (if configured) save the note to the `INDEX_PATH`.
+
+### Query the RAG pipeline
+
 ```bash
 curl -X POST http://localhost:8080/api/v1/query \
--H "Content-Type: application/json" \
--d '{ "query": "What color is the sky?" }'
+  -H "Content-Type: application/json" \
+  -d '{ "query": "What color is the sky?" }'
 ```
 
+**Payload**
 
-#### Get All Ingested Notes
+* `query` — the user question. The backend will retrieve relevant chunks from ChromaDB, and call Gemini to generate the final answer.
+
+### Get all ingested notes
+
 ```bash
 curl -X GET http://localhost:8080/api/v1/notes
 ```
 
-#### Health Check
+Returns a JSON array of stored notes (metadata and/or raw text depending on server implementation).
+
+### Health check
+
 ```bash
 curl -X GET http://localhost:8080/health
 ```
 
+A simple `200 OK` JSON response indicates the backend is running.
+
+---
+
+## Features called out in this repo
+
+* **Real-time file indexing** — the backend can monitor and index files under the `INDEX_PATH` (e.g., `.md`, `.txt`, `.pdf`). Configure `INDEX_PATH` in `server/.env`.
+* **Gemini function calling** — the server can use Gemini’s function-calling capability to perform controlled modifications to local files (behaviour depends on your backend implementation and the provided functions).
+* **Local embeddings** — Ollama + `nomic-embed-text:v1.5` is used for generating embeddings locally before storing vectors in ChromaDB.
+
+---
+
+## Notes, tips & troubleshooting
+
+* If the backend can't reach Gemini, confirm `GEMINI_API_KEY` is set properly and your machine has network access.
+* If embeddings fail, ensure `ollama serve` is running and the `nomic-embed-text` model is pulled.
+* If Chroma can't persist data, check file permissions in the directory passed to `chroma run --path`.
+* Logs from `go run main.go` will usually indicate where the flow fails (embedding generation, Chroma upsert, or Gemini call).
+* For PDF parsing, you may need a UniDoc license if the project uses UniDoc for robust PDF extraction. Configure `UNIDOC_LICENSE_KEY` as needed.
+
+---
+
+## Want changes?
+
+If you'd like the README adjusted (more examples, additional endpoints added from `endpoints.json`, or a CONTRIBUTING section), tell me what to include and I’ll update the document.
