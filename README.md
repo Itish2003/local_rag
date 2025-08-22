@@ -4,6 +4,19 @@ A Retrieval-Augmented Generation (RAG) application implemented with a Go backend
 
 ---
 
+## Features
+
+- **Go Backend**: A robust backend powered by Go, providing a RESTful API for ingesting notes, querying the RAG pipeline, and managing documents.
+- **React Frontend**: An intuitive user interface built with React and Material-UI, allowing for easy interaction with the backend services.
+- **Retrieval-Augmented Generation (RAG)**: Leverages the power of RAG to provide context-aware answers by retrieving relevant documents from a vector store before generating a response.
+- **Local Embeddings with Ollama**: Generates text embeddings locally using Ollama and the `nomic-embed-text` model, ensuring data privacy and reducing reliance on external services.
+- **Vector Storage with ChromaDB**: Uses ChromaDB for efficient storage and retrieval of document embeddings.
+- **Google Gemini Integration**: Integrates with the Google Gemini API for powerful language model capabilities, including text generation and function calling.
+- **Real-time File Indexing**: The backend automatically monitors a specified directory for file changes (`.txt`, `.md`, `.pdf`), keeping the vector database continuously synchronized.
+- **Gemini Function Calling**: The application empowers the LLM to interact directly with the local file system, allowing it to create, edit, and delete markdown files based on user prompts.
+
+---
+
 ## Table of contents
 
 1. [Prerequisites](#prerequisites)
@@ -185,14 +198,6 @@ curl -X GET http://localhost:8080/health
 ```
 
 A simple `200 OK` JSON response indicates the backend is running.
-
----
-
-## Features called out in this repo
-
-* **Real-time file indexing** — the backend can monitor and index files under the `INDEX_PATH` (e.g., `.md`, `.txt`, `.pdf`). Configure `INDEX_PATH` in `server/.env`.
-* **Gemini function calling** — the server can use Gemini’s function-calling capability to perform controlled modifications to local files (behaviour depends on your backend implementation and the provided functions).
-* **Local embeddings** — Ollama + `nomic-embed-text:v1.5` is used for generating embeddings locally before storing vectors in ChromaDB.
 
 ---
 
