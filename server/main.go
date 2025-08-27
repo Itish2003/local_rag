@@ -121,6 +121,7 @@ func main() {
 		apiV1.POST("/notes", ragController.IngestNote) // Endpoint to create a new note
 		apiV1.GET("/notes", ragController.GetAllNotes) // Endpoint to get all notes
 		apiV1.POST("/query", ragController.QueryRAG)   // Endpoint to ask a question
+		apiV1.GET("/status", ragController.GetIndexStatus)
 	}
 
 	// Start the Server

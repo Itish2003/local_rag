@@ -24,6 +24,23 @@ func NewRAGController(service services.RAGService) *RAGController {
 	}
 }
 
+// GetIndexStatus is the Gin handler for the GET /api/v1/status endpoint.
+func (c *RAGController) GetIndexStatus(ctx *gin.Context) {
+	// Delegate to a new service method to get the status
+	count, err := c.ragService.GetTotalChunks(ctx.Request.Context())
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get index status"})
+		return
+	}
+
+	// For now, we are just returning total chunks. This can be expanded later.
+	// We'll return a placeholder for totalFiles for now.
+	ctx.JSON(http.StatusOK, gin.H{
+		"totalFiles":  0, // Placeholder - implementing this requires more complex logic
+		"totalChunks": count,
+	})
+}
+
 // IngestNote is the Gin handler for the POST /api/v1/notes endpoint.
 // It parses the request, calls the service layer, and returns the HTTP response.
 func (c *RAGController) IngestNote(ctx *gin.Context) {

@@ -26,6 +26,7 @@ type RAGService interface {
 	QueryRAG(c context.Context, req models.QueryTextRequest) (*models.QueryRAGResponse, error)
 	GetAllNotes(c context.Context) (*models.GetAllNotesResponse, error)
 	EmbedTextWithOllama(ctx context.Context, textToEmbed string) ([]float32, error)
+	GetTotalChunks(c context.Context) (int, error)
 }
 
 // ragServiceImpl holds the dependencies it needs to do its job
@@ -34,6 +35,15 @@ type ragServiceImpl struct {
 	collection   chromago.Collection // Changed from pointer to interface
 	geminiClient *genai.Client
 	FileActions  *FileActions
+}
+
+// GetTotalChunks counts all the document chunks in the collection.
+func (r *ragServiceImpl) GetTotalChunks(c context.Context) (int, error) {
+	count, err := r.collection.Count(c)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count items in collection: %w", err)
+	}
+	return int(count), nil
 }
 
 // GetAllNotes implements RAGService to retrieve all documents from ChromaDB.

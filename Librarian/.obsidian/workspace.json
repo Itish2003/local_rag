@@ -89,7 +89,7 @@
       }
     ],
     "direction": "horizontal",
-    "width": 300
+    "width": 200
   },
   "right": {
     "id": "6ec4498f8e8cf06e",
@@ -151,12 +151,13 @@
             "state": {
               "type": "outline",
               "state": {
+                "file": "Testing Local RAG.md",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "Outline"
+              "title": "Outline of Testing Local RAG"
             }
           },
           {
@@ -188,10 +189,10 @@
       "obsidian-local-rag:Open Local RAG": false
     }
   },
-  "active": "09f5c278dc766e60",
+  "active": "6b18f8e67d582afb",
   "lastOpenFiles": [
+    "references.md",
     "Testing Local RAG.md",
-    "Welcome.md",
-    "references.md"
+    "Welcome.md"
   ]
 }
