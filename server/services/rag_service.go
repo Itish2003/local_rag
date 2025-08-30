@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github/itish2003/rag/models"
 
@@ -35,6 +36,8 @@ type ragServiceImpl struct {
 	collection   chromago.Collection // Changed from pointer to interface
 	geminiClient *genai.Client
 	FileActions  *FileActions
+	chatSessions map[string]*genai.Chat
+	mu           sync.Mutex
 }
 
 // GetTotalChunks counts all the document chunks in the collection.
@@ -138,7 +141,35 @@ func (r *ragServiceImpl) IngestNote(c context.Context, req models.IngestDataRequ
 
 // QueryRAG implements RAGService
 func (r *ragServiceImpl) QueryRAG(c context.Context, req models.QueryTextRequest) (*models.QueryRAGResponse, error) {
-	log.Printf("SERVICE: Querying RAG with: '%s'", req.Query)
+	log.Printf("SERVICE: Querying RAG with: '%s' (SessionID: '%s')", req.Query, req.SessionID)
+
+	// Lock the mutex to safely access the sessions map.
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var session *genai.Chat
+	sessionID := req.SessionID
+
+	// If a session ID is provided, try to find the existing session.
+	if sessionID != "" {
+		session = r.chatSessions[sessionID]
+	}
+
+	// If no session ID was provided OR the session was not found (e.g., server restarted),
+	// create a new one.
+	if session == nil {
+		log.Println("SERVICE: No active session found. Creating a new one.")
+		var err error
+		session, err = r.geminiClient.Chats.Create(c, "gemini-2.5-flash", &genai.GenerateContentConfig{
+			Tools: GetFileActionTools(),
+		}, nil)
+		if err != nil {
+			return nil, fmt.Errorf("could not start new chat session: %w", err)
+		}
+		// Generate a new unique ID for the session and store it.
+		sessionID = uuid.New().String()
+		r.chatSessions[sessionID] = session
+	}
 
 	retrievedDocs, err := r.retrieveDocuments(c, req.Query, 3)
 	if err != nil {
@@ -148,7 +179,7 @@ func (r *ragServiceImpl) QueryRAG(c context.Context, req models.QueryTextRequest
 	ragPrompt := r.createRAGPrompt(req.Query, retrievedDocs)
 
 	// Generate response from Gemini
-	geminiAnswer, err := r.generateResponseWithGemini(c, ragPrompt)
+	geminiAnswer, err := r.generateResponseWithGemini(c, session, ragPrompt)
 	if err != nil {
 		return nil, fmt.Errorf("could not generate response from gemini: %w", err)
 	}
@@ -156,6 +187,7 @@ func (r *ragServiceImpl) QueryRAG(c context.Context, req models.QueryTextRequest
 	response := &models.QueryRAGResponse{
 		Answer:     geminiAnswer,
 		SourceDocs: retrievedDocs,
+		SessionID:  sessionID,
 	}
 	return response, nil
 }
@@ -222,32 +254,18 @@ func (r *ragServiceImpl) retrieveDocuments(c context.Context, query string, nRes
 	return documents, nil
 }
 
-// generateResponseWithGemini generates a response using Gemini API
-func (r *ragServiceImpl) generateResponseWithGemini(c context.Context, prompt string) (string, error) {
-	log.Printf("SERVICE-HELPER: Sending prompt to Gemini with tool support...")
+// generateResponseWithGemini generates a response using a Gemini Chat Session
+func (r *ragServiceImpl) generateResponseWithGemini(c context.Context, chatSession *genai.Chat, prompt string) (string, error) {
+	log.Printf("SERVICE-HELPER: Sending prompt to Gemini with tool support using Chat Session...")
 
-	// The history of the conversation.
-	var history []*genai.Content
+	// 1. Define the initial message to send. This is the first turn of the conversation.
+	currentPart := genai.Part{Text: prompt}
 
-	// Create the first part and add it to the history.
-	history = append(history, &genai.Content{
-		Parts: []*genai.Part{
-			{Text: prompt},
-		},
-		Role: "user",
-	})
-
-	// Loop to handle potential function calls.
+	// 2. Loop to handle potential multi-turn interactions (like function calls).
 	for {
-		// Call the GenerateContent method with the history and tool config.
-		result, err := r.geminiClient.Models.GenerateContent(
-			c,
-			"gemini-2.5-flash",
-			history,
-			&genai.GenerateContentConfig{
-				Tools: GetFileActionTools(),
-			},
-		)
+		// 3. Send the current part to the model. The chatSession object automatically includes
+		// the entire conversation history from previous turns.
+		result, err := chatSession.SendMessage(c, currentPart)
 		if err != nil {
 			return "", fmt.Errorf("gemini api call failed: %w", err)
 		}
@@ -256,11 +274,10 @@ func (r *ragServiceImpl) generateResponseWithGemini(c context.Context, prompt st
 			return "I'm sorry, I couldn't generate a response based on the provided notes.", nil
 		}
 
-		// Append the model's response to the history.
-		history = append(history, result.Candidates[0].Content)
-
+		// Extract the first part of the model's response.
 		part := result.Candidates[0].Content.Parts[0]
-		// Check if the part contains a FunctionCall
+
+		// 4. Check if the model requested a function call.
 		if part.FunctionCall != nil {
 			call := part.FunctionCall
 			log.Printf("Gemini wants to call function: %s with args: %v", call.Name, call.Args)
@@ -277,23 +294,20 @@ func (r *ragServiceImpl) generateResponseWithGemini(c context.Context, prompt st
 				resultStr = fmt.Sprintf("Error: Unknown function '%s' requested.", call.Name)
 			}
 
-			// Create the function response part and add it to the history.
-			part2 := &genai.FunctionResponse{
-				Name:     call.Name,
-				Response: map[string]interface{}{"result": resultStr},
-			}
-			history = append(history, &genai.Content{
-				Parts: []*genai.Part{
-					{FunctionResponse: part2},
+			// 5. Prepare the function's result to be sent back to the model in the next turn.
+			// We set `currentPart` to this FunctionResponse.
+			currentPart = genai.Part{
+				FunctionResponse: &genai.FunctionResponse{
+					Name:     call.Name,
+					Response: map[string]interface{}{"result": resultStr},
 				},
-				Role: "user", // Role is 'user' for function responses.
-			})
+			}
 
-			// Continue the loop to get the next response from the model.
+			// 6. Continue the loop to send the function result back and get the next response.
 			continue
 		}
 
-		// If it's not a function call, we have our final answer.
+		// 7. If it's not a function call, we have our final text answer.
 		var responseText strings.Builder
 		for _, p := range result.Candidates[0].Content.Parts {
 			if p.Text != "" {
@@ -306,15 +320,22 @@ func (r *ragServiceImpl) generateResponseWithGemini(c context.Context, prompt st
 
 // createRAGPrompt creates a prompt with context for the LLM
 func (r *ragServiceImpl) createRAGPrompt(query string, retrievedDocs []models.SourceDocument) string {
+	// If no relevant documents are found, just pass the user's query directly.
+	// The model will rely on its conversational memory.
 	if len(retrievedDocs) == 0 {
-		return fmt.Sprintf("I don't have any relevant information to answer the question: %s", query)
+		return query
 	}
+
+	// If documents are found, build a prompt that includes them as context.
 	var context strings.Builder
+	context.WriteString("Use the following context to answer the question. If the answer is not in the context, use our previous conversation history.\n\n")
 	context.WriteString("Context:\n")
 	for _, doc := range retrievedDocs {
-		context.WriteString(fmt.Sprintf("%s\n\n", doc.Text))
+		context.WriteString(fmt.Sprintf("- %s\n", doc.Text))
 	}
-	prompt := fmt.Sprintf("Using only the provided context, answer the following question. If the context doesn't contain relevant information, say so.\n\n%s\n\nQuestion: %s\n\nAnswer:", context.String(), query)
+
+	// This new prompt structure gives the model the flexibility it needs.
+	prompt := fmt.Sprintf("%s\nQuestion: %s\n\nAnswer:", context.String(), query)
 	return prompt
 }
 
@@ -359,5 +380,6 @@ func NewRAGService(client *http.Client, collection chromago.Collection, geminiCl
 		collection:   collection, // No longer a pointer
 		geminiClient: geminiClient,
 		FileActions:  fileActions, // Initialize FileActions
+		chatSessions: make(map[string]*genai.Chat),
 	}
 }

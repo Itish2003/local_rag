@@ -5,5 +5,6 @@ type IngestDataRequest struct {
 }
 
 type QueryTextRequest struct {
-	Query string `json:"query"`
+	Query     string `json:"query"`
+	SessionID string `json:"sessionID,omitempty"`
 }

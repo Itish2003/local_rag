@@ -7,13 +7,14 @@ import QueryResults from './components/QueryResults';
 import Box from '@mui/material/Box';
 import Container from '@mui/material/Container';
 import Paper from '@mui/material/Paper';
-import { useState } from 'react';
+import { useState,useEffect } from 'react';
 
 function App() {
   const [refreshNotes, setRefreshNotes] = useState(0);
   const [queryResult, setQueryResult] = useState(null);
   const [queryLoading, setQueryLoading] = useState(false);
   const [queryError, setQueryError] = useState('');
+  const [sessionID, setSessionID] = useState('');
 
   const handleNoteAdded = () => setRefreshNotes(r => r + 1);
 
@@ -25,11 +26,13 @@ function App() {
       const res = await fetch('/api/v1/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query }),
+        // Include the sessionID in the request body
+        body: JSON.stringify({ query, sessionID }), // <-- MODIFY THIS LINE
       });
       if (!res.ok) throw new Error('Query failed');
       const data = await res.json();
       setQueryResult(data);
+      setSessionID(data.sessionID); // <-- STORE THE SESSION ID FROM THE RESPONSE
     } catch (err) {
       setQueryError('Failed to get results.');
     } finally {

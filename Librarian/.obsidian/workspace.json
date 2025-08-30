@@ -4,35 +4,20 @@
     "type": "split",
     "children": [
       {
-        "id": "e269c63379b24edb",
+        "id": "7aa87f95f46cb8fe",
         "type": "tabs",
         "children": [
           {
-            "id": "f6290dac7c61744d",
+            "id": "580432f56faf7992",
             "type": "leaf",
             "state": {
-              "type": "graph",
+              "type": "empty",
               "state": {},
-              "icon": "lucide-git-fork",
-              "title": "Graph view"
-            }
-          },
-          {
-            "id": "09f5c278dc766e60",
-            "type": "leaf",
-            "state": {
-              "type": "markdown",
-              "state": {
-                "file": "Testing Local RAG.md",
-                "mode": "source",
-                "source": false
-              },
               "icon": "lucide-file",
-              "title": "Testing Local RAG"
+              "title": "New tab"
             }
           }
-        ],
-        "currentTab": 1
+        ]
       }
     ],
     "direction": "vertical"
@@ -191,6 +176,7 @@
   },
   "active": "6b18f8e67d582afb",
   "lastOpenFiles": [
+    "Test.md",
     "references.md",
     "Testing Local RAG.md",
     "Welcome.md"
