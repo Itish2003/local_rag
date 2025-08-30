@@ -69,17 +69,29 @@ func (c *RAGController) IngestNote(ctx *gin.Context) {
 // QueryRAG is the Gin handler for the POST /api/v1/query endpoint.
 // It orchestrates the RAG pipeline by calling the service layer.
 func (c *RAGController) QueryRAG(ctx *gin.Context) {
-	var req models.QueryTextRequest
 
-	// Bind the request JSON to our QueryTextRequest struct.
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body: " + err.Error()})
+	query := ctx.PostForm("query")
+	sessionID := ctx.PostForm("sessionID")
+
+	if query == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Query text is required"})
 		return
+	}
+
+	fileHeader, err := ctx.FormFile("file")
+	if err != nil && err != http.ErrMissingFile {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file upload: " + err.Error()})
+		return
+	}
+
+	req := models.QueryTextRequest{
+		Query:     query,
+		SessionID: sessionID,
 	}
 
 	// Delegate the complex RAG pipeline logic to the service layer.
 	// The service will return the final response object or an error.
-	response, err := c.ragService.QueryRAG(ctx.Request.Context(), req)
+	response, err := c.ragService.QueryRAG(ctx.Request.Context(), req, fileHeader)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate AI response"})
 		return

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"strings"
 	"sync"
@@ -24,7 +25,7 @@ import (
 // RAGService interface defines methods for RAG operations
 type RAGService interface {
 	IngestNote(c context.Context, req models.IngestDataRequest) error
-	QueryRAG(c context.Context, req models.QueryTextRequest) (*models.QueryRAGResponse, error)
+	QueryRAG(c context.Context, req models.QueryTextRequest, fileHeader *multipart.FileHeader) (*models.QueryRAGResponse, error)
 	GetAllNotes(c context.Context) (*models.GetAllNotesResponse, error)
 	EmbedTextWithOllama(ctx context.Context, textToEmbed string) ([]float32, error)
 	GetTotalChunks(c context.Context) (int, error)
@@ -139,26 +140,42 @@ func (r *ragServiceImpl) IngestNote(c context.Context, req models.IngestDataRequ
 	return nil
 }
 
-// QueryRAG implements RAGService
-func (r *ragServiceImpl) QueryRAG(c context.Context, req models.QueryTextRequest) (*models.QueryRAGResponse, error) {
-	log.Printf("SERVICE: Querying RAG with: '%s' (SessionID: '%s')", req.Query, req.SessionID)
+// uploadFileToGemini uses the correct Files.Upload method.
+func (r *ragServiceImpl) uploadFileToGemini(c context.Context, fileHeader *multipart.FileHeader) (*genai.File, error) {
+	log.Printf("AGENT-HELPER: Uploading file '%s' to Gemini using Files.Upload...", fileHeader.Filename)
+	file, err := fileHeader.Open()
+	if err != nil {
+		return nil, fmt.Errorf("could not open file from header: %w", err)
+	}
+	defer file.Close()
 
-	// Lock the mutex to safely access the sessions map.
+	config := &genai.UploadFileConfig{
+		DisplayName: fileHeader.Filename,
+		MIMEType:    fileHeader.Header.Get("Content-Type"),
+	}
+
+	uploadedFile, err := r.geminiClient.Files.Upload(c, file, config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to upload file to Gemini: %w", err)
+	}
+	log.Printf("AGENT-HELPER: File uploaded successfully. URI: %s", uploadedFile.URI)
+	return uploadedFile, nil
+}
+
+// QueryRAG is the unified, multi-modal entrypoint.
+func (r *ragServiceImpl) QueryRAG(c context.Context, req models.QueryTextRequest, fileHeader *multipart.FileHeader) (*models.QueryRAGResponse, error) {
+	log.Printf("AGENT: Received query: '%s' (SessionID: '%s', File: %v)", req.Query, req.SessionID, fileHeader != nil)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	var session *genai.Chat
 	sessionID := req.SessionID
-
-	// If a session ID is provided, try to find the existing session.
 	if sessionID != "" {
 		session = r.chatSessions[sessionID]
 	}
 
-	// If no session ID was provided OR the session was not found (e.g., server restarted),
-	// create a new one.
 	if session == nil {
-		log.Println("SERVICE: No active session found. Creating a new one.")
+		log.Println("AGENT: No active session found. Creating a new one.")
 		var err error
 		session, err = r.geminiClient.Chats.Create(c, "gemini-2.5-flash", &genai.GenerateContentConfig{
 			Tools:             GetAllTools(),
@@ -167,15 +184,37 @@ func (r *ragServiceImpl) QueryRAG(c context.Context, req models.QueryTextRequest
 		if err != nil {
 			return nil, fmt.Errorf("could not start new chat session: %w", err)
 		}
-		// Generate a new unique ID for the session and store it.
 		sessionID = uuid.New().String()
 		r.chatSessions[sessionID] = session
 	}
 
-	// Generate response from Gemini
-	geminiAnswer, retrievedDocs, err := r.generateResponseWithGemini(c, session, req.Query)
+	var initialParts []genai.Part
+
+	if fileHeader != nil {
+		uploadedFile, err := r.uploadFileToGemini(c, fileHeader)
+		if err != nil {
+			return nil, fmt.Errorf("could not process file upload: %w", err)
+		}
+
+		// 1. Create a genai.Part struct.
+		// 2. Set its FileData field to a POINTER to a genai.FileData struct.
+		initialParts = append(initialParts, genai.Part{
+			FileData: &genai.FileData{
+				FileURI:  uploadedFile.URI,
+				MIMEType: uploadedFile.MIMEType,
+			},
+		})
+	}
+
+	// 1. Create another genai.Part struct.
+	// 2. Set its Text field to the user's query string.
+	initialParts = append(initialParts, genai.Part{
+		Text: req.Query,
+	})
+
+	geminiAnswer, retrievedDocs, err := r.runAgenticLoop(c, session, initialParts)
 	if err != nil {
-		return nil, fmt.Errorf("could not generate response from gemini: %w", err)
+		return nil, fmt.Errorf("agentic loop failed: %w", err)
 	}
 
 	response := &models.QueryRAGResponse{
@@ -184,6 +223,93 @@ func (r *ragServiceImpl) QueryRAG(c context.Context, req models.QueryTextRequest
 		SessionID:  sessionID,
 	}
 	return response, nil
+}
+
+// runAgenticLoop is the core reasoning loop for the agent.
+func (r *ragServiceImpl) runAgenticLoop(c context.Context, chatSession *genai.Chat, initialParts []genai.Part) (string, []models.SourceDocument, error) {
+	log.Printf("AGENT-LOOP: Starting with %d initial parts...", len(initialParts))
+	var allRetrievedDocs []models.SourceDocument
+
+	result, err := chatSession.SendMessage(c, initialParts...)
+	if err != nil {
+		return "", nil, fmt.Errorf("gemini api call failed: %w", err)
+	}
+
+	for {
+		if len(result.Candidates) == 0 || len(result.Candidates[0].Content.Parts) == 0 {
+			return "I'm sorry, I couldn't generate a response.", nil, nil
+		}
+		part := result.Candidates[0].Content.Parts[0]
+
+		if part.FunctionCall != nil {
+			call := part.FunctionCall
+			log.Printf("AGENT: Wants to call function: %s with args: %v", call.Name, call.Args)
+			var functionResponsePart *genai.Part
+
+			switch call.Name {
+			case "retrieveDocuments":
+				query, ok := call.Args["query"].(string)
+				var toolResult string
+				if !ok {
+					toolResult = "Error: 'query' argument must be a string."
+				} else {
+					docs, err := r.retrieveDocuments(c, query, 3)
+					if err != nil {
+						toolResult = fmt.Sprintf("Error retrieving documents: %v", err)
+					} else {
+						allRetrievedDocs = append(allRetrievedDocs, docs...)
+						jsonBytes, err := json.Marshal(docs)
+						if err != nil {
+							toolResult = "Error: Could not format the retrieved documents."
+						} else {
+							toolResult = string(jsonBytes)
+						}
+					}
+				}
+				functionResponsePart = &genai.Part{FunctionResponse: &genai.FunctionResponse{Name: call.Name, Response: map[string]interface{}{"result": toolResult}}}
+
+			case "createMarkdownFile":
+				filename, _ := call.Args["filename"].(string)
+				content, _ := call.Args["content"].(string)
+				resultStr := r.FileActions.CreateMarkdownFile(filename, content)
+				functionResponsePart = &genai.Part{FunctionResponse: &genai.FunctionResponse{Name: call.Name, Response: map[string]interface{}{"result": resultStr}}}
+
+			case "deleteMarkdownFile":
+				filename, _ := call.Args["filename"].(string)
+				resultStr := r.FileActions.DeleteMarkdownFile(filename)
+				functionResponsePart = &genai.Part{FunctionResponse: &genai.FunctionResponse{Name: call.Name, Response: map[string]interface{}{"result": resultStr}}}
+
+			case "editMarkdownFile":
+				filename, _ := call.Args["filename"].(string)
+				content, _ := call.Args["content"].(string)
+				resultStr := r.FileActions.EditMarkdownFile(filename, content)
+				functionResponsePart = &genai.Part{FunctionResponse: &genai.FunctionResponse{Name: call.Name, Response: map[string]interface{}{"result": resultStr}}}
+
+			default:
+				resultStr := fmt.Sprintf("Error: Unknown function '%s' requested.", call.Name)
+				functionResponsePart = &genai.Part{FunctionResponse: &genai.FunctionResponse{Name: call.Name, Response: map[string]interface{}{"result": resultStr}}}
+			}
+
+			nextResult, err := chatSession.SendMessage(c, *functionResponsePart)
+			if err != nil {
+				return "", nil, fmt.Errorf("gemini api call failed after tool use: %w", err)
+			}
+			result = nextResult
+			continue
+		}
+
+		var responseText strings.Builder
+		// The loop variable 'p' is a *genai.Part (a pointer to the struct).
+		for _, p := range result.Candidates[0].Content.Parts {
+			// We directly access the 'Text' field of the struct, just like in the original implementation.
+			// No type assertion is needed.
+			if p.Text != "" {
+				responseText.WriteString(p.Text)
+			}
+		}
+		// Exit the loop and return the final answer.
+		return responseText.String(), allRetrievedDocs, nil
+	}
 }
 
 // retrieveDocuments queries ChromaDB for similar documents using v2 API
@@ -369,5 +495,6 @@ func NewRAGService(client *http.Client, collection chromago.Collection, geminiCl
 		geminiClient: geminiClient,
 		FileActions:  fileActions, // Initialize FileActions
 		chatSessions: make(map[string]*genai.Chat),
+		mu:           sync.Mutex{},
 	}
 }

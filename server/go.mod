@@ -81,5 +81,5 @@ require (
 	github.com/oklog/ulid v1.3.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/yalue/onnxruntime_go v1.19.0 // indirect
-	google.golang.org/genai v1.21.0
+	google.golang.org/genai v1.22.0
 )
