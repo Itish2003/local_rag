@@ -161,7 +161,8 @@ func (r *ragServiceImpl) QueryRAG(c context.Context, req models.QueryTextRequest
 		log.Println("SERVICE: No active session found. Creating a new one.")
 		var err error
 		session, err = r.geminiClient.Chats.Create(c, "gemini-2.5-flash", &genai.GenerateContentConfig{
-			Tools: GetFileActionTools(),
+			Tools:             GetAllTools(),
+			SystemInstruction: GetSystemPrompt(),
 		}, nil)
 		if err != nil {
 			return nil, fmt.Errorf("could not start new chat session: %w", err)
@@ -171,15 +172,8 @@ func (r *ragServiceImpl) QueryRAG(c context.Context, req models.QueryTextRequest
 		r.chatSessions[sessionID] = session
 	}
 
-	retrievedDocs, err := r.retrieveDocuments(c, req.Query, 3)
-	if err != nil {
-		return nil, err
-	}
-
-	ragPrompt := r.createRAGPrompt(req.Query, retrievedDocs)
-
 	// Generate response from Gemini
-	geminiAnswer, err := r.generateResponseWithGemini(c, session, ragPrompt)
+	geminiAnswer, retrievedDocs, err := r.generateResponseWithGemini(c, session, req.Query)
 	if err != nil {
 		return nil, fmt.Errorf("could not generate response from gemini: %w", err)
 	}
@@ -248,95 +242,89 @@ func (r *ragServiceImpl) retrieveDocuments(c context.Context, query string, nRes
 			}
 		}
 	}
-	// =====================================================================================
-
 	log.Printf("SERVICE-HELPER: Retrieved %d documents", len(documents))
 	return documents, nil
 }
 
 // generateResponseWithGemini generates a response using a Gemini Chat Session
-func (r *ragServiceImpl) generateResponseWithGemini(c context.Context, chatSession *genai.Chat, prompt string) (string, error) {
+func (r *ragServiceImpl) generateResponseWithGemini(c context.Context, chatSession *genai.Chat, prompt string) (string, []models.SourceDocument, error) {
 	log.Printf("SERVICE-HELPER: Sending prompt to Gemini with tool support using Chat Session...")
 
 	// 1. Define the initial message to send. This is the first turn of the conversation.
 	currentPart := genai.Part{Text: prompt}
+	var allRetrievedDocs []models.SourceDocument
 
 	// 2. Loop to handle potential multi-turn interactions (like function calls).
 	for {
-		// 3. Send the current part to the model. The chatSession object automatically includes
-		// the entire conversation history from previous turns.
 		result, err := chatSession.SendMessage(c, currentPart)
 		if err != nil {
-			return "", fmt.Errorf("gemini api call failed: %w", err)
+			return "", nil, fmt.Errorf("gemini api call failed: %w", err)
 		}
 
 		if len(result.Candidates) == 0 || len(result.Candidates[0].Content.Parts) == 0 {
-			return "I'm sorry, I couldn't generate a response based on the provided notes.", nil
+			return "I'm sorry, I couldn't generate a response.", nil, nil
 		}
 
-		// Extract the first part of the model's response.
 		part := result.Candidates[0].Content.Parts[0]
 
-		// 4. Check if the model requested a function call.
 		if part.FunctionCall != nil {
 			call := part.FunctionCall
-			log.Printf("Gemini wants to call function: %s with args: %v", call.Name, call.Args)
+			log.Printf("AGENT: Wants to call function: %s with args: %v", call.Name, call.Args)
 
-			var resultStr string
+			var functionResponsePart *genai.Part
+
 			switch call.Name {
+			case "retrieveDocuments":
+				query, ok := call.Args["query"].(string)
+				var toolResult string
+				if !ok {
+					toolResult = "Error: 'query' argument must be a string."
+				} else {
+					docs, err := r.retrieveDocuments(c, query, 3)
+					if err != nil {
+						toolResult = fmt.Sprintf("Error retrieving documents: %v", err)
+					} else {
+						allRetrievedDocs = append(allRetrievedDocs, docs...)
+						jsonBytes, err := json.Marshal(docs)
+						if err != nil {
+							toolResult = "Error: Could not format the retrieved documents."
+						} else {
+							toolResult = string(jsonBytes)
+						}
+					}
+				}
+				functionResponsePart = &genai.Part{FunctionResponse: &genai.FunctionResponse{Name: call.Name, Response: map[string]interface{}{"result": toolResult}}}
+
 			case "createMarkdownFile":
-				resultStr = r.FileActions.CreateMarkdownFile(call.Args["filename"].(string), call.Args["content"].(string))
+				resultStr := r.FileActions.CreateMarkdownFile(call.Args["filename"].(string), call.Args["content"].(string))
+				functionResponsePart = &genai.Part{FunctionResponse: &genai.FunctionResponse{Name: call.Name, Response: map[string]interface{}{"result": resultStr}}}
+
 			case "deleteMarkdownFile":
-				resultStr = r.FileActions.DeleteMarkdownFile(call.Args["filename"].(string))
+				resultStr := r.FileActions.DeleteMarkdownFile(call.Args["filename"].(string))
+				functionResponsePart = &genai.Part{FunctionResponse: &genai.FunctionResponse{Name: call.Name, Response: map[string]interface{}{"result": resultStr}}}
+
 			case "editMarkdownFile":
-				resultStr = r.FileActions.EditMarkdownFile(call.Args["filename"].(string), call.Args["content"].(string))
+				resultStr := r.FileActions.EditMarkdownFile(call.Args["filename"].(string), call.Args["content"].(string))
+				functionResponsePart = &genai.Part{FunctionResponse: &genai.FunctionResponse{Name: call.Name, Response: map[string]interface{}{"result": resultStr}}}
+
 			default:
-				resultStr = fmt.Sprintf("Error: Unknown function '%s' requested.", call.Name)
+				resultStr := fmt.Sprintf("Error: Unknown function '%s' requested.", call.Name)
+				functionResponsePart = &genai.Part{FunctionResponse: &genai.FunctionResponse{Name: call.Name, Response: map[string]interface{}{"result": resultStr}}}
 			}
 
-			// 5. Prepare the function's result to be sent back to the model in the next turn.
-			// We set `currentPart` to this FunctionResponse.
-			currentPart = genai.Part{
-				FunctionResponse: &genai.FunctionResponse{
-					Name:     call.Name,
-					Response: map[string]interface{}{"result": resultStr},
-				},
-			}
-
-			// 6. Continue the loop to send the function result back and get the next response.
+			currentPart = *functionResponsePart
 			continue
 		}
 
-		// 7. If it's not a function call, we have our final text answer.
+		// If no function call, we have the final answer.
 		var responseText strings.Builder
 		for _, p := range result.Candidates[0].Content.Parts {
 			if p.Text != "" {
 				responseText.WriteString(p.Text)
 			}
 		}
-		return responseText.String(), nil
+		return responseText.String(), allRetrievedDocs, nil
 	}
-}
-
-// createRAGPrompt creates a prompt with context for the LLM
-func (r *ragServiceImpl) createRAGPrompt(query string, retrievedDocs []models.SourceDocument) string {
-	// If no relevant documents are found, just pass the user's query directly.
-	// The model will rely on its conversational memory.
-	if len(retrievedDocs) == 0 {
-		return query
-	}
-
-	// If documents are found, build a prompt that includes them as context.
-	var context strings.Builder
-	context.WriteString("Use the following context to answer the question. If the answer is not in the context, use our previous conversation history.\n\n")
-	context.WriteString("Context:\n")
-	for _, doc := range retrievedDocs {
-		context.WriteString(fmt.Sprintf("- %s\n", doc.Text))
-	}
-
-	// This new prompt structure gives the model the flexibility it needs.
-	prompt := fmt.Sprintf("%s\nQuestion: %s\n\nAnswer:", context.String(), query)
-	return prompt
 }
 
 // EmbedTextWithOllama generates embeddings using Ollama.

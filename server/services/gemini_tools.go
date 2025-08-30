@@ -2,11 +2,25 @@ package services
 
 import "google.golang.org/genai"
 
-// GetFileActionTools defines the list of functions available to Gemini for file manipulation.
-func GetFileActionTools() []*genai.Tool {
+// GetAllTools defines the list of functions available to Gemini for file manipulation.
+func GetAllTools() []*genai.Tool {
 	return []*genai.Tool{
 		{
 			FunctionDeclarations: []*genai.FunctionDeclaration{
+				{
+					Name:        "retrieveDocuments",
+					Description: "Search the user's notes for documents relevant to a specific topic or question.",
+					Parameters: &genai.Schema{
+						Type: genai.TypeObject,
+						Properties: map[string]*genai.Schema{
+							"query": {
+								Type:        genai.TypeString,
+								Description: "The specific topic or question to search for in the document store. This should be a concise search query.",
+							},
+						},
+						Required: []string{"query"},
+					},
+				},
 				{
 					Name:        "createMarkdownFile",
 					Description: "Create a new markdown file with specified content in the notes directory.",
