@@ -1,0 +1,96 @@
+.local-rag-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%; /* Makes the container fill the view pane */
+}
+
+.chat-header {
+  padding: 8px 12px;
+  text-align: center;
+  font-size: 0.8em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.chat-history {
+  flex-grow: 1; /* Allows this area to grow and fill available space */
+  overflow-y: auto; /* Adds a scrollbar when content overflows */
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.chat-message {
+  padding: 10px 14px;
+  border-radius: 12px;
+  max-width: 80%;
+  white-space: pre-wrap; /* Respects newlines in the text */
+}
+
+.user-message {
+  background-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+  align-self: flex-end; /* Aligns user messages to the right */
+  border-bottom-right-radius: 2px;
+}
+
+.assistant-message {
+  background-color: var(--background-secondary);
+  align-self: flex-start; /* Aligns assistant messages to the left */
+  border-bottom-left-radius: 2px;
+  width: 100%; /* Make assistant message take full width for sources */
+  max-width: 100%;
+}
+
+.assistant-answer {
+  margin-bottom: 10px;
+}
+
+.rag-sources {
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: 10px;
+  font-size: 0.9em;
+}
+
+.rag-sources details {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  margin-top: 8px;
+}
+.rag-sources summary {
+  padding: 8px;
+  font-weight: bold;
+  cursor: pointer;
+}
+.rag-sources-content {
+  padding: 8px 12px;
+  border-top: 1px solid var(--background-modifier-border);
+  white-space: pre-wrap;
+}
+
+.chat-input-form {
+  padding: 10px;
+  border-top: 1px solid var(--background-modifier-border);
+  display: flex;
+  gap: 10px;
+}
+
+.chat-input-form textarea {
+  flex-grow: 1;
+  resize: none; /* Prevents user from resizing the textarea */
+}
+
+.message-actions {
+  text-align: right;
+  margin-top: 8px;
+}
+
+.insert-icon {
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.insert-icon:hover {
+  opacity: 1.0;
+}

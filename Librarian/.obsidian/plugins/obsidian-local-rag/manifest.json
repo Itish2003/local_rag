@@ -1,0 +1,10 @@
+{
+	"id": "obsidian-local-rag",
+	"name": "Librarian",
+	"version": "1.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "Query your local notes using a powerful RAG pipeline.",
+	"author": "Itish Srivastava",
+	"authorUrl": "",
+	"isDesktopOnly": false
+}
