@@ -8,6 +8,7 @@ A Retrieval-Augmented Generation (RAG) application implemented with a Go backend
 
 - **Go Backend**: A robust backend powered by Go, providing a RESTful API for ingesting notes, querying the RAG pipeline, and managing documents.
 - **React Frontend**: An intuitive user interface built with React and Material-UI, allowing for easy interaction with the backend services.
+- **Obsidian Plugin**: A plugin for Obsidian that provides a chat interface to interact with your notes, query the RAG pipeline, and insert generated content directly into your editor.
 - **Retrieval-Augmented Generation (RAG)**: Leverages the power of RAG to provide context-aware answers by retrieving relevant documents from a vector store before generating a response.
 - **Local Embeddings with Ollama**: Generates text embeddings locally using Ollama and the `nomic-embed-text` model, ensuring data privacy and reducing reliance on external services.
 - **Vector Storage with ChromaDB**: Uses ChromaDB for efficient storage and retrieval of document embeddings.
@@ -150,6 +151,19 @@ npm run dev
 ```
 
 By default Vite serves the client at `http://localhost:5173` and proxies `/api` to the Go backend.
+
+### Terminal 5 — Obsidian Plugin (optional)
+
+This project includes an Obsidian plugin for a seamless note-taking and querying experience.
+
+1.  **Open the Vault**: Open the `Librarian/` directory as a vault in your Obsidian application.
+2.  **Enable the Plugin**:
+    *   Go to `Settings` > `Community Plugins`.
+    *   Make sure "Restricted mode" is turned off.
+    *   You should see a plugin named "Librarian" under "Installed plugins". Enable it.
+3.  **Open the Plugin View**: Click the "brain-circuit" icon in the left ribbon to open the Local RAG chat panel.
+
+You can now query your notes directly from within Obsidian.
 
 ---
 
